@@ -1,0 +1,27 @@
+#!/usr/local/bin/bash
+
+required_path=/Users/sbecker11/workspace-go/webgl-point-cloud/wasm
+actual_path=$(pwd)
+if [ $actual_path != $required_path ]; then
+    echo "You are not in the correct directory"
+    echo "You are in $actual_path"
+    echo "You need to be in $required_path"
+    exit 1
+fi
+
+read -p "Press any key to delete main.wasm" -n 1 -s
+rm main.wasm
+
+echo  ""
+read -p "Press any key after refreshing the browser..." -n 1 -s
+
+echo ""
+echo read -p "Press any key to build main.wasm..." -n 1 -s
+GOOS=js GOARCH=wasm go build -o main.wasm wasm_main.go
+echo "successfully built main.wasm"
+
+echo ""
+read -p "Press any key after refreshing the browser..." -n 1 -s
+
+echo ""
+echo "done"

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>WebGL Sphere Viewer</title>
+	<style>
+		body { margin: 0; overflow: hidden; background-color: #000; }
+		canvas { display: block; width: 100vw; height: 100vh; }
+	</style>
+	<script src="wasm_exec.js"></script>
+	<script>
+		// Ensure WebAssembly is supported
+		if (!WebAssembly.instantiateStreaming) { 
+			WebAssembly.instantiateStreaming = async (resp, importObject) => {
+				const source = await (await resp).arrayBuffer();
+				return await WebAssembly.instantiate(source, importObject);
+			};
+		}
+
+		const go = new Go();
+		async function runWASM() {
+			try {
+				const result = await WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject);
+				go.run(result.instance);
+			} catch (err) {
+				console.error(err);
+				alert("Error loading WebAssembly: " + err.message);
+			}
+		}
+		runWASM();
+	</script>
+</head>
+<body>
+	<canvas id="canvas"></canvas>
+</body>
+</html>
