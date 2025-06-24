@@ -100,7 +100,7 @@ Open your web browser and go to http://localhost:8080/wasm/index.html.
     <html>
     <head>
         <meta charset="utf-8">
-        <title>WebGL Sphere Viewer</title>
+        <title>WebGL Point Cloud Viewer</title>
         <style>
             body { margin: 0; overflow: hidden; background-color: #000; }
             canvas { display: block; width: 100vw; height: 100vh; }

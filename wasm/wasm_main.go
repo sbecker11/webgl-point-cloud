@@ -1,12 +1,17 @@
+// wasm/wasm_main.go
+// build: GOOS=js GOARCH=wasm go build -o wasm/main.wasm wasm/wasm_main.go
+// usage: executed by wasm/index.html
+
 package main
 
+
 import (
-	"fmt"
 	"math"
 	"math/rand"
 	"syscall/js"
 	"time"
-	"github.com/sbecker11/webgl-point-cloud/glf32" // Import your new package. Make sure your go.mod references this path.
+	"unsafe"
+	"github.com/sbecker11/webgl-point-cloud/glf32"
 )
 
 // applyMatrixToVec3s applies a 4x4 column-major matrix to a slice of 3D vertex coordinates (x,y,z).
@@ -107,323 +112,258 @@ func generateCircle(radius float32, segments int) []float32 {
 	return vertices
 }
 
+// drawObject is a helper function that encapsulates the WebGL calls needed to draw a single object.
+// It binds the position and color buffers, sets the attribute pointers, and issues a draw call.
+func drawObject(gl, positionLoc, colorLoc, posBuf, colorBuf, drawMode js.Value, vertexCount int) {
+	// Bind position buffer
+	gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), posBuf)
+	gl.Call("vertexAttribPointer", positionLoc, 3, gl.Get("FLOAT"), false, 0, 0)
+
+	// Bind color buffer
+	gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), colorBuf)
+	gl.Call("vertexAttribPointer", colorLoc, 3, gl.Get("FLOAT"), false, 0, 0)
+
+	// Draw the object
+	gl.Call("drawArrays", drawMode, 0, vertexCount)
+}
+
 func main() {
 	// Seed random number generator
 	rand.Seed(time.Now().UnixNano())
-
-	// Debug log
 	js.Global().Get("console").Call("log", "WASM module started")
 
-	// Ensure the WASM module stays alive
-	c := make(chan struct{}, 0)
+	// --- Global Variables ---
+	// Encapsulate WebGL state and matrices to be accessible by resize handler
+	var gl js.Value
+	var program js.Value
+	var mvpLoc js.Value
+	var viewMatrix, projMatrix glf32.Mat4
+	var angle float32
 
-	// Get canvas and WebGL context
+	// Get canvas
 	canvas := js.Global().Get("document").Call("getElementById", "canvas")
 	if canvas.IsNull() {
 		js.Global().Call("alert", "Canvas element not found")
 		return
 	}
 
-	gl := canvas.Call("getContext", "webgl")
+	// --- WebGL and Data Setup ---
+	// Most of the one-time setup code remains the same...
+	gl = canvas.Call("getContext", "webgl")
 	if gl.IsNull() {
 		js.Global().Call("alert", "WebGL not supported")
 		return
 	}
-
-	// Enable depth testing
 	gl.Call("enable", gl.Get("DEPTH_TEST"))
-	gl.Call("lineWidth", 2.0)
-
-	// Set viewport
-	width := canvas.Get("width").Int()
-	height := canvas.Get("height").Int()
-	gl.Call("viewport", 0, 0, width, height)
-
-	// Set up WebGL
-	gl.Call("clearColor", 0.0, 0.1, 0.25, 1.0) // Dark blue clear color
+	gl.Call("lineWidth", 8.0)
+	gl.Call("clearColor", 0.0, 0.1, 0.25, 1.0)
 
 	numElements := 1000
-	pointSize := 4.0 // Slightly larger points for visibility
-
-	// Create 3D points within a unit sphere using rejection sampling
-	coordinates := make([]float32, numElements*3) // numElements * 3 coordinates (x, y, z)
+	pointSize := 3.0
+	coordinates := make([]float32, numElements*3)
 	pointsGenerated := 0
 	for pointsGenerated < numElements {
-		x := 2*rand.Float32() - 1 // Generate between -1 and 1
+		x := 2*rand.Float32() - 1
 		y := 2*rand.Float32() - 1
 		z := 2*rand.Float32() - 1
-
-		// Check if point is within unit sphere (distance squared <= 1.0 from origin)
 		if x*x+y*y+z*z <= 1.0 {
 			coordinates[pointsGenerated*3] = x
 			coordinates[pointsGenerated*3+1] = y
 			coordinates[pointsGenerated*3+2] = z
-			pointsGenerated++ // Only increment if accepted
+			pointsGenerated++
 		}
 	}
-	js.Global().Get("console").Call("log", fmt.Sprintf("Generated %d points in a unit sphere", numElements))
-
 	pointColors := make([]float32, numElements*3)
 	for i := 0; i < numElements; i++ {
-		pointColors[i*3] = 1.0 // White points
-		pointColors[i*3+1] = 1.0
-		pointColors[i*3+2] = 1.0
+		pointColors[i*3], pointColors[i*3+1], pointColors[i*3+2] = 1.0, 1.0, 1.0
 	}
-
-	// NOTE: cylinderRadius is in world-space units.
-	cylinderRadius := float32(0.02)
-	cylinderHeight := float32(2.0)
-	cylinderSegments := 16
-
-	// Generate base cylinder (aligned with Y-axis)
-	yAxisCylinder := generateCylinder(cylinderRadius, cylinderHeight, cylinderSegments)
-
-	// Transform for X-axis (Rotate Y-aligned cylinder to be X-aligned)
-	// Rotation around Z by -PI/2 (90 degrees clockwise from Y to X)
-	rotZToX := glf32.RotateZ(float32(-math.Pi / 2))
-	xAxisCylinder := applyMatrixToVec3s(yAxisCylinder, rotZToX)
-
-	// Transform for Z-axis (Rotate Y-aligned cylinder to be Z-aligned)
-	// Rotation around X by PI/2 (90 degrees counter-clockwise from Y to Z)
-	rotXToZ := glf32.RotateX(float32(math.Pi / 2))
-	zAxisCylinder := applyMatrixToVec3s(yAxisCylinder, rotXToZ)
-
-	// Combine all axis vertices
+	yAxisCylinder := generateCylinder(0.02, 2.0, 16)
+	xAxisCylinder := applyMatrixToVec3s(yAxisCylinder, glf32.RotateZ(-math.Pi/2))
+	zAxisCylinder := applyMatrixToVec3s(yAxisCylinder, glf32.RotateX(math.Pi/2))
 	axisVertices := append(append(xAxisCylinder, yAxisCylinder...), zAxisCylinder...)
 	numAxisVertices := len(axisVertices) / 3
-
-	// Assign colors to axes (Red for X, Green for Y, Blue for Z)
 	axisColors := make([]float32, numAxisVertices*3)
-	numCylinderBodyVertices := len(yAxisCylinder) / 3 // Vertices per axis-cylinder
-	for i := 0; i < numCylinderBodyVertices; i++ { // X-axis (Red)
-		axisColors[i*3+0] = 1.0 // R
-		axisColors[i*3+1] = 0.0 // G
-		axisColors[i*3+2] = 0.0 // B
+	numCylVerts := len(yAxisCylinder) / 3
+	for i := 0; i < numCylVerts; i++ {
+		axisColors[i*3], axisColors[i*3+1], axisColors[i*3+2] = 1.0, 0.0, 0.0
 	}
-	for i := 0; i < numCylinderBodyVertices; i++ { // Y-axis (Green)
-		offset := numCylinderBodyVertices * 3
-		axisColors[offset+i*3+0] = 0.0 // R
-		axisColors[offset+i*3+1] = 1.0 // G
-		axisColors[offset+i*3+2] = 0.0 // B
+	for i := 0; i < numCylVerts; i++ {
+		offset := numCylVerts * 3
+		axisColors[offset+i*3], axisColors[offset+i*3+1], axisColors[offset+i*3+2] = 0.0, 1.0, 0.0
 	}
-	for i := 0; i < numCylinderBodyVertices; i++ { // Z-axis (Blue)
-		offset := (numCylinderBodyVertices * 2) * 3
-		axisColors[offset+i*3+0] = 0.0 // R
-		axisColors[offset+i*3+1] = 0.0 // G
-		axisColors[offset+i*3+2] = 1.0 // B
+	for i := 0; i < numCylVerts; i++ {
+		offset := (numCylVerts * 2) * 3
+		axisColors[offset+i*3], axisColors[offset+i*3+1], axisColors[offset+i*3+2] = 0.0, 0.0, 1.0
 	}
-
-	// Generate circles for axis planes
-	circleSegments := 64
-	circleRadius := float32(1.0)
-	baseCircle := generateCircle(circleRadius, circleSegments) // Base circle on XY plane
-
-	// Z-axis circle (blue, on XY plane - no rotation needed from base)
+	baseCircle := generateCircle(1.0, 64)
+	xCircleVertices := applyMatrixToVec3s(baseCircle, glf32.RotateY(math.Pi/2))
+	yCircleVertices := applyMatrixToVec3s(baseCircle, glf32.RotateX(math.Pi/2))
 	zCircleVertices := baseCircle
-
-	// X-axis circle (red, transform XY circle to YZ plane)
-	// Rotate around Y by 90 degrees (to move X to Z, Z to -X)
-	rot90y := glf32.RotateY(float32(math.Pi / 2))
-	xCircleVertices := applyMatrixToVec3s(baseCircle, rot90y)
-
-	// Y-axis circle (green, transform XY circle to XZ plane)
-	// Rotate around X by 90 degrees (to move Y to Z, Z to -Y)
-	rot90x := glf32.RotateX(float32(math.Pi / 2))
-	yCircleVertices := applyMatrixToVec3s(baseCircle, rot90x)
 
 	// Combine all circle vertices
 	circleVertices := append(append(xCircleVertices, yCircleVertices...), zCircleVertices...)
 	numCircleVertices := len(circleVertices) / 3
-	numSegCircleVertices := len(baseCircle) / 3 // Vertices per circle
 
-	// Assign colors to circles (Red for X-plane, Green for Y-plane, Blue for Z-plane)
-	circleColors := make([]float32, numCircleVertices*3)
-	for i := 0; i < numSegCircleVertices; i++ { // X-plane Circle (Red)
-		circleColors[i*3+0] = 1.0 // R
-		circleColors[i*3+1] = 0.0 // G
-		circleColors[i*3+2] = 0.0 // B
+	// --- Assign colors to circles to match their corresponding axis ---
+	// The circle on the YZ plane (normal=X) is Red.
+	// The circle on the XZ plane (normal=Y) is Green.
+	// The circle on the XY plane (normal=Z) is Blue.
+	numSegCircleVerts := len(baseCircle) / 3 // Vertices per individual circle
+
+	xCircleColors := make([]float32, numSegCircleVerts*3)
+	for i := 0; i < numSegCircleVerts; i++ { // Red for X-plane circle
+		xCircleColors[i*3+0] = 1.0
+		xCircleColors[i*3+1] = 0.0
+		xCircleColors[i*3+2] = 0.0
 	}
-	for i := 0; i < numSegCircleVertices; i++ { // Y-plane Circle (Green)
-		offset := numSegCircleVertices * 3
-		circleColors[offset+i*3+0] = 0.0 // R
-		circleColors[offset+i*3+1] = 1.0 // G
-		circleColors[offset+i*3+2] = 0.0 // B
+	yCircleColors := make([]float32, numSegCircleVerts*3)
+	for i := 0; i < numSegCircleVerts; i++ { // Green for Y-plane circle
+		yCircleColors[i*3+0] = 0.0
+		yCircleColors[i*3+1] = 1.0
+		yCircleColors[i*3+2] = 0.0
 	}
-	for i := 0; i < numSegCircleVertices; i++ { // Z-plane Circle (Blue)
-		offset := (numSegCircleVertices * 2) * 3
-		circleColors[offset+i*3+0] = 0.0 // R
-		circleColors[offset+i*3+1] = 0.0 // G
-		circleColors[offset+i*3+2] = 1.0 // B
+	zCircleColors := make([]float32, numSegCircleVerts*3)
+	for i := 0; i < numSegCircleVerts; i++ { // Blue for Z-plane circle
+		zCircleColors[i*3+0] = 0.0
+		zCircleColors[i*3+1] = 0.0
+		zCircleColors[i*3+2] = 1.0
 	}
 
-	js.Global().Get("console").Call("log", "Geometry generated")
+	// Combine all circle colors in the same order as the vertices
+	circleColors := append(append(xCircleColors, yCircleColors...), zCircleColors...)
 
-	// --- WebGL Buffer Setup ---
-	pointPositionBuffer := gl.Call("createBuffer")
-	gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), pointPositionBuffer)
-	gl.Call("bufferData", gl.Get("ARRAY_BUFFER"), js.Global().Get("Float32Array").New(js.ValueOf(coordinates)), gl.Get("STATIC_DRAW"))
+	pointPositionBuffer := glf32.UploadSliceToGL(gl, coordinates, "ARRAY_BUFFER", gl.Get("STATIC_DRAW"))
+	pointColorBuffer := glf32.UploadSliceToGL(gl, pointColors, "ARRAY_BUFFER", gl.Get("STATIC_DRAW"))
+	axisPositionBuffer := glf32.UploadSliceToGL(gl, axisVertices, "ARRAY_BUFFER", gl.Get("STATIC_DRAW"))
+	axisColorBuffer := glf32.UploadSliceToGL(gl, axisColors, "ARRAY_BUFFER", gl.Get("STATIC_DRAW"))
+	circlePositionBuffer := glf32.UploadSliceToGL(gl, circleVertices, "ARRAY_BUFFER", gl.Get("STATIC_DRAW"))
+	circleColorBuffer := glf32.UploadSliceToGL(gl, circleColors, "ARRAY_BUFFER", gl.Get("STATIC_DRAW"))
 
-	pointColorBuffer := gl.Call("createBuffer")
-	gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), pointColorBuffer)
-	gl.Call("bufferData", gl.Get("ARRAY_BUFFER"), js.Global().Get("Float32Array").New(js.ValueOf(pointColors)), gl.Get("STATIC_DRAW"))
-
-	axisPositionBuffer := gl.Call("createBuffer")
-	gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), axisPositionBuffer)
-	gl.Call("bufferData", gl.Get("ARRAY_BUFFER"), js.Global().Get("Float32Array").New(js.ValueOf(axisVertices)), gl.Get("STATIC_DRAW"))
-
-	axisColorBuffer := gl.Call("createBuffer")
-	gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), axisColorBuffer)
-	gl.Call("bufferData", gl.Get("ARRAY_BUFFER"), js.Global().Get("Float32Array").New(js.ValueOf(axisColors)), gl.Get("STATIC_DRAW"))
-
-	circlePositionBuffer := gl.Call("createBuffer")
-	gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), circlePositionBuffer)
-	gl.Call("bufferData", gl.Get("ARRAY_BUFFER"), js.Global().Get("Float32Array").New(js.ValueOf(circleVertices)), gl.Get("STATIC_DRAW"))
-
-	circleColorBuffer := gl.Call("createBuffer")
-	gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), circleColorBuffer)
-	gl.Call("bufferData", gl.Get("ARRAY_BUFFER"), js.Global().Get("Float32Array").New(js.ValueOf(circleColors)), gl.Get("STATIC_DRAW"))
-	js.Global().Get("console").Call("log", "Buffer data set")
-
-	// --- Shader Setup ---
 	vertexShaderSource := `
-        attribute vec3 position;
-        attribute vec3 color;
-        uniform mat4 modelViewProjection;
-        uniform float pointSize;
-        varying vec4 vColor;
-        void main() {
-            // Standard column-major multiplication: Matrix * Vector
-            gl_Position = modelViewProjection * vec4(position, 1.0);
-            gl_PointSize = pointSize;
-            vColor = vec4(color, 1.0);
-        }
-    `
+		attribute vec3 position;
+		attribute vec3 color;
+		uniform mat4 modelViewProjection;
+		uniform float pointSize;
+		varying vec4 vColor;
+		void main() {
+			// Standard column-major multiplication: Matrix * Vector
+			gl_Position = modelViewProjection * vec4(position, 1.0);
+			gl_PointSize = pointSize;
+			vColor = vec4(color, 1.0);
+		}
+	`
+	fragmentShaderSource := `
+		precision mediump float;
+		varying vec4 vColor;
+		void main() {
+			gl_FragColor = vColor;
+		}
+	`
+
 	vertexShader := gl.Call("createShader", gl.Get("VERTEX_SHADER"))
 	gl.Call("shaderSource", vertexShader, vertexShaderSource)
 	gl.Call("compileShader", vertexShader)
-	if !gl.Call("getShaderParameter", vertexShader, gl.Get("COMPILE_STATUS")).Bool() {
-		js.Global().Call("alert", "Vertex shader failed: "+gl.Call("getShaderInfoLog", vertexShader).String())
-		return
-	}
 
-	fragmentShaderSource := `
-        precision mediump float;
-        varying vec4 vColor;
-        void main() {
-            gl_FragColor = vColor;
-        }
-    `
 	fragmentShader := gl.Call("createShader", gl.Get("FRAGMENT_SHADER"))
 	gl.Call("shaderSource", fragmentShader, fragmentShaderSource)
 	gl.Call("compileShader", fragmentShader)
-	if !gl.Call("getShaderParameter", fragmentShader, gl.Get("COMPILE_STATUS")).Bool() {
-		js.Global().Call("alert", "Fragment shader failed: "+gl.Call("getShaderInfoLog", fragmentShader).String())
-		return
-	}
 
-	program := gl.Call("createProgram")
+	program = gl.Call("createProgram")
 	gl.Call("attachShader", program, vertexShader)
 	gl.Call("attachShader", program, fragmentShader)
 	gl.Call("linkProgram", program)
-	if !gl.Call("getProgramParameter", program, gl.Get("LINK_STATUS")).Bool() {
-		js.Global().Call("alert", "Program link failed: "+gl.Call("getProgramInfoLog", program).String())
-		return
-	}
 	gl.Call("useProgram", program)
 
 	positionLoc := gl.Call("getAttribLocation", program, "position")
-	gl.Call("enableVertexAttribArray", positionLoc)
-
 	colorLoc := gl.Call("getAttribLocation", program, "color")
-	gl.Call("enableVertexAttribArray", colorLoc)
-
-	mvpLoc := gl.Call("getUniformLocation", program, "modelViewProjection")
-	if mvpLoc.IsNull() {
-		js.Global().Call("alert", "Failed to get modelViewProjection uniform")
-		return
-	}
-
+	mvpLoc = gl.Call("getUniformLocation", program, "modelViewProjection")
 	pointSizeLoc := gl.Call("getUniformLocation", program, "pointSize")
-	if pointSizeLoc.IsNull() {
-		js.Global().Call("alert", "Failed to get pointSize uniform")
-		return
-	}
+
+	gl.Call("enableVertexAttribArray", positionLoc)
+	gl.Call("enableVertexAttribArray", colorLoc)
 	gl.Call("uniform1f", pointSizeLoc, float32(pointSize))
 
-	// --- Camera and Projection Setup ---
-	camera_distance := float32(3.0) // Adjusted distance for better view of unit sphere (was 1000.0)
-	aspect = float32(width) / float32(height) // Ensure aspect ratio matches canvas
-	fov = float32(math.Pi / 4) // 45 degrees vertical FOV
-	near, far = float32(0.1), float32(100.0)
+	// --- Animation and Resize Loop ---
+	var renderFrame js.Func
+	var resizeHandler js.Func
 
-	projMatrix := glf32.Perspective(fov, aspect, near, far) // Using glf32.Perspective
-	
-	// Define camera eye, center, and up as glf32.Vec3 types
-	eyeVec := glf32.Normalize(glf32.Vec3{1, 1, 1}) // Normalize direction
-	eyeVec = glf32.Vec3{eyeVec[0] * camera_distance, eyeVec[1] * camera_distance, eyeVec[2] * camera_distance} // Scale by distance
-	centerVec := glf32.Vec3{0.0, 0.0, 0.0}
-	upVec := glf32.Vec3{0.0, 1.0, 0.0}
-	viewMatrix := glf32.LookAt(eyeVec, centerVec, upVec) // Using glf32.LookAt
+	// update function recalculates matrices and viewport based on window size
+	update := func() {
+		// Get window inner dimensions
+		winWidth := js.Global().Get("innerWidth").Float()
+		winHeight := js.Global().Get("innerHeight").Float()
 
-	// --- Animation Loop ---
-	var render js.Func
-	var angle float32
+		// Determine the smaller dimension to create a square canvas
+		size := math.Min(winWidth, winHeight)
 
-	render = js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-		angle += 0.01 // Increment rotation angle for animation
+		// Update canvas drawing buffer size
+		canvas.Set("width", size)
+		canvas.Set("height", size)
 
-		// Model Matrix: Rotation of the entire scene (the sphere and axes) around Y-axis
-		// Use glf32.RotateY which returns a column-major matrix
+		// Update WebGL viewport
+		gl.Call("viewport", 0, 0, size, size)
+
+		// --- Update Camera and Projection ---
+		camera_distance := float32(3.0)
+		aspect := float32(1.0) // Always 1.0 for a square canvas
+		fov := float32(math.Pi / 4)
+		near, far := float32(0.1), float32(100.0)
+
+		projMatrix = glf32.Perspective(fov, aspect, near, far)
+		eyeVec := glf32.Vec3{camera_distance, camera_distance, camera_distance}
+		centerVec := glf32.Vec3{0.0, 0.0, 0.0}
+		upVec := glf32.Vec3{0.0, 1.0, 0.0}
+		viewMatrix = glf32.LookAt(eyeVec, centerVec, upVec)
+	}
+
+	// renderFrame function performs the drawing for each animation frame
+	renderFrame = js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		angle += 0.01
+		if angle > 2*math.Pi {
+			angle -= 2 * math.Pi
+		}
+
 		modelMatrix := glf32.RotateY(angle)
-
-		// Calculate MVP Matrix (Projection * View * Model) for column-major
-		// M_final = M_projection * M_view * M_model
-		// Step 1: Combine View and Model
 		viewModelMatrix := glf32.MultiplyMatrices(viewMatrix, modelMatrix)
-		// Step 2: Combine Projection with (View * Model)
 		finalMVPMatrix := glf32.MultiplyMatrices(projMatrix, viewModelMatrix)
 
-		// Convert the Go Mat4 (slice of float32) to JavaScript Float32Array
-		jsMvp := js.Global().Get("Float32Array").New(js.ValueOf(finalMVPMatrix))
-
-		// Set the MVP uniform in the shader. 'false' indicates no transpose needed
-		// because both our Go matrices and WebGL/GLSL are column-major.
+		byteLen := len(finalMVPMatrix) * 4
+		byteSlice := unsafe.Slice((*byte)(unsafe.Pointer(&finalMVPMatrix[0])), byteLen)
+		jsBytes := js.Global().Get("Uint8Array").New(byteLen)
+		js.CopyBytesToJS(jsBytes, byteSlice)
+		jsMvp := js.Global().Get("Float32Array").New(jsBytes.Get("buffer"))
 		gl.Call("uniformMatrix4fv", mvpLoc, false, jsMvp)
 
-		// Clear the canvas and depth buffer
 		gl.Call("clear", gl.Get("COLOR_BUFFER_BIT").Int()|gl.Get("DEPTH_BUFFER_BIT").Int())
 
-		// --- Draw the Points ---
-		gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), pointPositionBuffer)
-		gl.Call("vertexAttribPointer", positionLoc, 3, gl.Get("FLOAT"), false, 0, 0)
-		gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), pointColorBuffer)
-		gl.Call("vertexAttribPointer", colorLoc, 3, gl.Get("FLOAT"), false, 0, 0)
-		gl.Call("drawArrays", gl.Get("POINTS"), 0, numElements)
+		// Draw the scene objects using the helper function
+		drawObject(gl, positionLoc, colorLoc, pointPositionBuffer, pointColorBuffer, gl.Get("POINTS"), numElements)
+		drawObject(gl, positionLoc, colorLoc, axisPositionBuffer, axisColorBuffer, gl.Get("TRIANGLES"), numAxisVertices)
+		drawObject(gl, positionLoc, colorLoc, circlePositionBuffer, circleColorBuffer, gl.Get("LINES"), numCircleVertices)
 
-		// --- Draw the Axes --- (Cylinders)
-		gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), axisPositionBuffer)
-		gl.Call("vertexAttribPointer", positionLoc, 3, gl.Get("FLOAT"), false, 0, 0)
-		gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), axisColorBuffer)
-		gl.Call("vertexAttribPointer", colorLoc, 3, gl.Get("FLOAT"), false, 0, 0)
-		gl.Call("drawArrays", gl.Get("TRIANGLES"), 0, numAxisVertices) // Draw as triangles (solid cylinders)
-
-		// --- Draw the Circles --- (Planes)
-		gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), circlePositionBuffer)
-		gl.Call("vertexAttribPointer", positionLoc, 3, gl.Get("FLOAT"), false, 0, 0)
-		gl.Call("bindBuffer", gl.Get("ARRAY_BUFFER"), circleColorBuffer)
-		gl.Call("vertexAttribPointer", colorLoc, 3, gl.Get("FLOAT"), false, 0, 0)
-		gl.Call("drawArrays", gl.Get("LINES"), 0, numCircleVertices) // Draw as lines (wireframe circles)
-
-
-		// Request next animation frame
-		js.Global().Call("requestAnimationFrame", render)
+		js.Global().Call("requestAnimationFrame", renderFrame)
 		return nil
 	})
-	defer render.Release()
 
+	// resizeHandler updates the canvas and matrices, then triggers a redraw
+	resizeHandler = js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		update()
+		return nil
+	})
+
+	// --- Start Application ---
+	// Set initial size
+	update()
+	// Add resize event listener
+	js.Global().Call("addEventListener", "resize", resizeHandler)
 	// Start animation loop
-	js.Global().Call("requestAnimationFrame", render)
+	js.Global().Call("requestAnimationFrame", renderFrame)
 	js.Global().Get("console").Call("log", "Animation loop started")
 
-	<-c // Keep the Go program running indefinitely
+	// Keep Go from exiting
+	<-make(chan struct{})
+
+	// Release JS functions when done (though this part is never reached in this app)
+	defer renderFrame.Release()
+	defer resizeHandler.Release()
 }

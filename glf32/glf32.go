@@ -1,10 +1,11 @@
+// glf32/glf32.go
 package glf32
 
 import (
-	"fmt"
 	"math"
+	"fmt"
 )
-
+ 
 // Mat4 represents a 4x4 column-major matrix as a slice of 16 float32 values.
 // The elements are stored in column-major order:
 // m0, m1, m2, m3 (column 0)
@@ -18,6 +19,44 @@ type Vec3 []float32
 
 // Vec4 represents a 4D vector as a slice of 4 float32 values.
 type Vec4 []float32
+
+// PrintMat4 prints a 4x4 matrix in column major order with an optional label.
+func PrintMat4(label string, m Mat4) {
+	if label != "" {
+		fmt.Printf("%s:\n", label)
+	}
+	//                            col0, col1, col2, col3
+	fmt.Printf("[%f %f %f %f]\n", m[0], m[4], m[8], m[12])  // row0
+	fmt.Printf("[%f %f %f %f]\n", m[1], m[5], m[9], m[13])  // row1
+	fmt.Printf("[%f %f %f %f]\n", m[2], m[6], m[10], m[14]) // ros2
+	fmt.Printf("[%f %f %f %f]\n", m[3], m[7], m[11], m[15]) // row3
+}
+
+// PrintVec3 prints a 3D vector with optional label.
+func PrintVec3(label string, v Vec3) {
+	if label != "" {
+		fmt.Printf("%s: ", label)
+	}
+	fmt.Printf("[%f %f %f]\n", v[0], v[1], v[2])
+}
+
+// PrintVec4 prints a 4D vector with optional label.
+func PrintVec4(label string, v Vec4) {
+	if label != "" {
+		fmt.Printf("%s: ", label)
+	}
+	fmt.Printf("[%f %f %f %f]\n", v[0], v[1], v[2], v[3])
+}
+
+// PrintVec3ListElement prints the i'th 3D vector element in a packed list of 3D vectors.
+func PrintVec3ListElement(i int, m Vec3) {
+	fmt.Printf("%d: [%f %f %f]\n", i, m[i*3], m[i*3+1], m[i*3+2])
+}
+
+// PrintVec4ListElement prints the i'th 4D vector element in a packed list of 4D vectors.
+func PrintVec4ListElement(i int, m Vec4) {
+	fmt.Printf("%d: [%f %f %f %f]\n", i, m[i*4], m[i*4+1], m[i*4+2], m[i*4+3])
+}
 
 // Identity returns a new 4x4 identity matrix (column-major).
 func Identity() Mat4 {
@@ -81,7 +120,7 @@ func Dot(a, b Vec3) float32 {
 // Parameters:
 //   x, y, z: The translation amounts along the respective axes.
 //
-// Returns a Mat4 representing the translation matrix.
+// Returns a column major Mat4 representing the translation matrix.
 func Translate(x, y, z float32) Mat4 {
 	return Mat4{
 		1, 0, 0, 0, // Column 0
@@ -96,7 +135,7 @@ func Translate(x, y, z float32) Mat4 {
 // Parameters:
 //   angle: The rotation angle in radians.
 //
-// Returns a Mat4 representing the rotation matrix.
+// Returns a column-majorMat4 representing the rotation matrix.
 func RotateX(angle float32) Mat4 {
 	s, c := float32(math.Sin(float64(angle))), float32(math.Cos(float64(angle)))
 	return Mat4{
@@ -112,7 +151,7 @@ func RotateX(angle float32) Mat4 {
 // Parameters:
 //   angle: The rotation angle in radians.
 //
-// Returns a Mat4 representing the rotation matrix.
+// Returns a column-major Mat4 representing the rotation matrix.
 func RotateY(angle float32) Mat4 {
 	s, c := float32(math.Sin(float64(angle))), float32(math.Cos(float64(angle)))
 	return Mat4{
@@ -128,7 +167,7 @@ func RotateY(angle float32) Mat4 {
 // Parameters:
 //   angle: The rotation angle in radians.
 //
-// Returns a Mat4 representing the rotation matrix.
+// Returns a column-major Mat4 representing the rotation matrix.
 func RotateZ(angle float32) Mat4 {
 	s, c := float32(math.Sin(float64(angle))), float32(math.Cos(float64(angle)))
 	return Mat4{
@@ -139,13 +178,14 @@ func RotateZ(angle float32) Mat4 {
 	}
 }
 
-// LookAt creates a 4x4 column-major view matrix.
-// This matrix transforms world coordinates into camera (view) coordinates.
+// LookAt creates a 4x4 column-major view matrix that transforms world
+// coordinates into camera (view) coordinates. This is used to position and
+// orient the camera in the scene.
 //
 // Parameters:
 //   eye: The position of the camera in world space (e.g., Vec3{x, y, z}).
-//   center: The point in world space that the camera is looking at (e.g., Vec3{x, y, z}).
-//   up: The world's "up" direction (e.g., Vec3{0, 1, 0} for Y-up).
+//   center: The point in world space that the camera is looking at.
+//   up: The world's "up" direction (typically Vec3{0, 1, 0}).
 //
 // Returns a Mat4 representing the 4x4 column-major view matrix.
 // Panics if input vectors are not of length 3.
@@ -163,23 +203,23 @@ func LookAt(eye, center, up Vec3) Mat4 {
 	s := Normalize(Cross(f, up))
 
 	// u (camera up direction): Vector perpendicular to s and f.
-	// This will be the positive Y-axis of the camera's local coordinate system.
-	// It's re-calculated here to ensure it's truly orthogonal to s and f.
+	// This is re-calculated to ensure it's truly orthogonal to s and f.
 	u := Cross(s, f)
 
-	// The view matrix is essentially the inverse of the camera's world matrix.
-	// For column-major, the first three columns are the camera's local X, Y, and -Z axes.
-	// The last column is the negative translation of the eye point projected onto these axes.
+	// The view matrix is the inverse of the camera's world matrix.
+	// For a column-major matrix, the first three columns are the camera's local
+	// X, Y, and -Z axes. The last column is the translation component, calculated
+	// by taking the dot product of the camera's new axes with the eye position.
 	tx := -Dot(s, eye)
 	ty := -Dot(u, eye)
-	tz := Dot(f, eye) // Note: f points eye->center, but camera Z-axis points center->eye, so dot(camera_Z, eye) = dot(-f, eye) = -dot(f, eye). The sign here reflects that.
+	tz := Dot(f, eye)
 
 	return Mat4{
 		// Column 0 (Camera X-axis / Right Vector)
 		s[0], s[1], s[2], 0,
 		// Column 1 (Camera Y-axis / Up Vector)
 		u[0], u[1], u[2], 0,
-		// Column 2 (Camera Z-axis / Look Vector, pointing *back* towards eye from center)
+		// Column 2 (Camera Z-axis / Inverse Look Vector)
 		-f[0], -f[1], -f[2], 0,
 		// Column 3 (Translation)
 		tx, ty, tz, 1,

@@ -9,19 +9,30 @@ if [ $actual_path != $required_path ]; then
     exit 1
 fi
 
-read -p "Press any key to delete main.wasm" -n 1 -s
-rm main.wasm
+# verify that the server is running
+lsof -i :8080
+if [ $? -ne 0 ]; then
+    echo "Server is not running"
+    return 1
+fi
 
-echo  ""
-read -p "Press any key after refreshing the browser..." -n 1 -s
+# remove the wasm file if it exists
+rm -f main.wasm
 
-echo ""
-echo read -p "Press any key to build main.wasm..." -n 1 -s
+# verify that index.html references main.wasm
+if ! grep -q "main.wasm" index.html; then
+    echo "index.html does not reference main.wasm"
+    return 1
+fi
+
+# build the wasm file
 GOOS=js GOARCH=wasm go build -o main.wasm wasm_main.go
-echo "successfully built main.wasm"
 
-echo ""
-read -p "Press any key after refreshing the browser..." -n 1 -s
+# verify that the wasm file was built
+if [ ! -f main.wasm ]; then
+    echo "main.wasm was not built"
+    return 1
+fi
 
-echo ""
-echo "done"
+echo "now refresh browser at http://localhost:8080":
+
