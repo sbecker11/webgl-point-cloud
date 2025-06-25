@@ -3,6 +3,7 @@
 <head>
 	<meta charset="utf-8">
 	<title>WebGL Point Cloud Viewer</title>
+	<link rel="icon" href="favicon.ico" type="image/x-icon">
 	<style>
 		body {
 			margin: 0;
@@ -16,13 +17,22 @@
 	</style>
 	<script src="wasm_exec.js"></script>
 	<script>
-		const go = new Go();
-		WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject).then((result) => {
-			go.run(result.instance);
+		// Make the Go instance global so our WASM program can find it.
+		window.go = new Go();
+		const importObject = window.go.importObject;
+
+		// This is a compatibility shim for different Go versions.
+		// The WASM binary expects an import object named "gojs".
+		if (importObject.go && !importObject.gojs) {
+			importObject.gojs = importObject.go;
+		}
+
+		WebAssembly.instantiateStreaming(fetch("main.wasm"), importObject).then((result) => {
+			// Run the WebAssembly program.
+			window.go.run(result.instance);
 		});
 	</script>
 </head>
 <body>
 	<canvas id="canvas"></canvas>
 </body>
-</html>

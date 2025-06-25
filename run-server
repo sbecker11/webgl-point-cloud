@@ -1,1 +1,36 @@
-./server
+#!/bin/bash
+# Kills any process on port 8080, then rebuilds and runs the server.
+
+PORT=8080
+
+# Find and kill the process using the port
+PID=$(lsof -t -i:$PORT)
+if [ -n "$PID" ]; then
+    echo "Killing process $PID on port $PORT"
+    kill -9 $PID
+fi
+
+# Build the Go WASM module
+echo "Building WASM..."
+GOOS=js GOARCH=wasm go build -o wasm/main.wasm ./wasm
+
+# Build the server
+echo "Building server..."
+go build -o server-build server.go
+if [ $? -ne 0 ]; then
+    echo "Server build failed."
+    exit 1
+fi
+
+# Run the server
+echo "Starting server on http://localhost:$PORT"
+./server-build &
+SERVER_PID=$!
+
+# Wait a moment for the server to start, then open the URL
+sleep 1
+open http://localhost:8080/wasm/
+
+# Bring the server process to the foreground to keep the script running
+# and allow Ctrl+C to stop it.
+wait $SERVER_PID 

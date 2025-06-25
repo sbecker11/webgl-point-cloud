@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGL Point Cloud Project</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+    <h1>Project: WebGL Point Cloud</h1>
+    <p><a href="https://github.com/sbecker11/webgl-point-cloud">github.com/sbecker11/webgl-point-cloud</a></p>
+
+    <p>
+        <a href="wasm/index.html" target="_blank">
+            <img src="./media/Sphere86KB.png" alt="Sphere Demo" style="width:12%; vertical-align: middle; margin-right: 10px;">
+            Click here to see the live demo
+        </a>
+    </p>
+
+    <h2>Features</h2>
+    <ul>
+        <li>Renders a 3D point cloud sphere with axes and reference circles.</li>
+        <li><strong>Interactive Rotation:</strong> Click and drag the mouse to rotate the model. The rotation includes a damping effect for a smooth stop.</li>
+        <li><strong>Responsive Canvas:</strong> The WebGL canvas dynamically resizes to fit the window.</li>
+        <li><strong>Automatic Dark Mode:</strong> The page theme adapts to your system's light or dark mode settings.</li>
+    </ul>
+
+    <h2>Project Structure:</h2>
+    <pre><code>webgl-point-cloud/
+├── main.go               &lt;-- Go HTTP server
+├── go.mod                &lt;-- Go module file (for both server and glf32 package)
+├── go.sum
+├── glf32/                &lt;-- New linear algebra package
+│   └── glf32.go
+└── wasm/                 &lt;-- Directory for WebAssembly related files
+    ├── wasm_main.go      &lt;-- Your WebGL application source
+    ├── index.html        &lt;-- HTML page to load the WASM app
+    └── wasm_exec.js      &lt;-- Go's WASM glue code (copied here)
+    └── main.wasm         &lt;-- Compiled WebGL application (output of wasm_main.go)
+</code></pre>
+
+    <h2>Compilation and Execution Steps:</h2>
+    <p>Initialize Go Module (if not already done):<br>
+    If this is a new project, in your-project-name/, run:</p>
+    <pre><code>go mod init github.com/sbecker11/webgl-point-cloud</code></pre>
+
+    <h2>Update wasm/wasm_main.go Import Path:</h2>
+    <p>Make sure the import for <code>glf32</code> in <code>wasm/wasm_main.go</code> is correct relative to your <code>go.mod</code> file. If your <code>go.mod</code> is module your-project-name, then the import in <code>wasm_main.go</code> should be:</p>
+    <pre><code>import "webgl-point-cloud/glf32"</code></pre>
+
+    <h2>Copy wasm_exec.js:</h2>
+    <p>Copy the installed <code>wasm_exec.js</code> from <code>$GOROOT</code> directory.</p>
+    <pre><code>cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" webgl-point-cloud/wasm/</code></pre>
+    <p>If you can't find <code>wasm_exec.js</code> under <code>$GOROOT</code> then get it from using:</p>
+    <pre><code>curl -o wasm/wasm_exec.js https://raw.githubusercontent.com/golang/go/master/misc/wasm/wasm_exec.js</code></pre>
+    
+    <h2>Tidy Your Go Modules:</h2>
+    <p>In your project root, run:</p>
+    <pre><code>go mod tidy</code></pre>
+    <p>This ensures that the local <code>glf32</code> package is correctly recognized by both <code>main.go</code> and <code>wasm/wasm_main.go</code>.</p>
+
+    <h2>Compile the WebAssembly Application:</h2>
+    <p>Navigate to the <code>wasm/</code> directory under your project-root:</p>
+    <pre><code>cd webgl-point-cloud/wasm/</code></pre>
+    <p>Then compile:</p>
+    <pre><code>GOOS=js GOARCH=wasm go build -o main.wasm wasm_main.go</code></pre>
+    <p>This will create <code>main.wasm</code> in the same folder <code>webgl-point-cloud/wasm/</code>.</p>
+
+    <h2>Compile the HTTP Server:</h2>
+    <p>Navigate back to the project root:</p>
+    <pre><code>cd webgl-point-cloud/</code></pre>
+    <p>Then compile the server:</p>
+    <pre><code>go build -o server main.go</code></pre>
+    <p>This creates an executable <code>server</code> (or <code>server.exe</code> on Windows) in your project root.</p>
+
+    <h2>Run the Server:</h2>
+    <pre><code>./server</code></pre>
+    <p>You'll see <code>Server running at http://localhost:8080</code>.</p>
+
+    <h2>View in Browser:</h2>
+    <p>Open your web browser and go to <a href="http://localhost:8080/wasm/index.html">http://localhost:8080/wasm/index.html</a></p>
+    <p>Click and drag the mouse on the canvas to rotate the scene.</p>
+    
+    <h2>Notes:</h2>
+    <ol>
+        <li><strong>Save the <code>glf32</code> package:</strong><br>
+            Create a directory named <code>glf32</code> inside your project root. Save the code provided previously (from "glf32/glf32.go") into <code>your-project/glf32/glf32.go</code>.</li>
+        <li><strong>Update <code>go.mod</code>:</strong><br>
+            If you don't have a <code>go.mod</code> file, create one in your project root: <code>go mod init your-project-name</code> (replace <code>your-project-name</code> with your actual project name, e.g., <code>github.com/yourusername/webgl-sphere-project</code>)<br>
+            Then, in <code>main.go</code>, change the import <code>glf32</code> to reflect your module path: <code>import "your-project-name/glf32"</code> (e.g., <code>import "github.com/yourusername/webgl-sphere-project/glf32"</code>)<br>
+            Run <code>go mod tidy</code> in your project root to ensure dependencies are resolved.</li>
+        <li><strong>HTML Setup:</strong> Ensure you have a valid <code>wasm/index.html</code> file to load your WebAssembly application. The server is configured to serve the entire <code>wasm</code> directory.</li>
+        <li><strong><code>wasm_exec.js</code>:</strong> Copy this file from your Go installation into the <code>wasm/</code> directory:<br>
+            <code>cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" ./wasm/</code></li>
+        <li><strong>Build the WASM:</strong><br>
+            <code>GOOS=js GOARCH=wasm go build -o wasm/main.wasm wasm/wasm_main.go</code></li>
+        <li><strong>Serve:</strong><br>
+            You'll need a simple HTTP server to serve the files. You can use the one provided (<code>server.go</code>) or a standard one like Python's: <code>python -m http.server 8080</code><br>
+            Then open your browser to http://localhost:8080/wasm/.</li>
+    </ol>
+    <p>This setup fully integrates your <code>glf32</code> package, uses the correct column-major matrix logic, and renders your animated sphere and axes in WebGL.</p>
+
+</body>
+</html>

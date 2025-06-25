@@ -10,9 +10,11 @@ import (
 )
 
 func main() {
-    fs := http.FileServer(http.Dir("wasm"))
+    // configure the server to serve files from the current directory
+    fs := http.FileServer(http.Dir("."))
     http.Handle("/", fs)
 
+    // server configured to listen on port 8080
     fmt.Println("Server running at http://localhost:8080")
     err := http.ListenAndServe(":8080", nil)
     if err != nil {
