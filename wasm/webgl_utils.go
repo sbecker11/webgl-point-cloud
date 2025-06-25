@@ -3,22 +3,33 @@ package main
 
 import (
 	"fmt"
+	"reflect"
 	"syscall/js"
 	"unsafe"
 )
 
-
-// sliceToJsFloat32Array converts a Go slice to a JavaScript Float32Array
+// sliceToJsFloat32Array converts a Go slice to a JavaScript Float32Array by
+// copying the data. This is a safer approach than creating a view, as it
+// prevents "detached ArrayBuffer" errors if the Go WASM memory is resized.
 func sliceToJsFloat32Array(slice []float32) js.Value {
-	if len(slice) == 0 {
-		return js.Null()
-	}
-	// Get the WebAssembly memory from the global `go` instance.
-	goInstance := js.Global().Get("go")
-	mem := goInstance.Get("_inst").Get("exports").Get("mem")
-	buffer := mem.Get("buffer")
-	// Create a new Float32Array view over the specified section of the buffer.
-	return js.Global().Get("Float32Array").New(buffer, uintptr(unsafe.Pointer(&slice[0])), len(slice))
+	// Create a new JavaScript ArrayBuffer of the required size.
+	jsArray := js.Global().Get("Uint8Array").New(len(slice) * 4)
+
+	// Create a Go byte slice that views the same memory as the float32 slice
+	header := (*reflect.SliceHeader)(unsafe.Pointer(&slice))
+	header.Len *= 4
+	header.Cap *= 4
+	byteSlice := *(*[]byte)(unsafe.Pointer(header))
+
+	// Copy the data from Go to JavaScript.
+	js.CopyBytesToJS(jsArray, byteSlice)
+
+	// Restore the slice header to its original state to avoid memory corruption.
+	header.Len /= 4
+	header.Cap /= 4
+
+	// Create a Float32Array view on the new buffer.
+	return js.Global().Get("Float32Array").New(jsArray.Get("buffer"))
 }
 
 // drawObject is a helper function that encapsulates the WebGL calls needed to draw a single object.

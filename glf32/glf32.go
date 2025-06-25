@@ -194,34 +194,24 @@ func LookAt(eye, center, up Vec3) Mat4 {
 		panic("LookAt: input vectors must be Vec3 (length 3)")
 	}
 
-	// f (forward/look direction): Vector from eye to center. This will be the
-	// negative Z-axis of the camera's local coordinate system in world space.
 	f := Normalize(Subtract(center, eye))
-
-	// s (side/right direction): Vector perpendicular to f and world up.
-	// This will be the positive X-axis of the camera's local coordinate system.
 	s := Normalize(Cross(f, up))
-
-	// u (camera up direction): Vector perpendicular to s and f.
-	// This is re-calculated to ensure it's truly orthogonal to s and f.
 	u := Cross(s, f)
 
-	// The view matrix is the inverse of the camera's world matrix.
-	// For a column-major matrix, the first three columns are the camera's local
-	// X, Y, and -Z axes. The last column is the translation component, calculated
-	// by taking the dot product of the camera's new axes with the eye position.
 	tx := -Dot(s, eye)
 	ty := -Dot(u, eye)
-	tz := Dot(f, eye)
+	tz := Dot(f, eye) // This is equivalent to -Dot(-f, eye)
 
+	// The view matrix is the inverse of the camera's transformation matrix.
+	// For column-major order, this is the correctly transposed layout.
 	return Mat4{
-		// Column 0 (Camera X-axis / Right Vector)
-		s[0], s[1], s[2], 0,
-		// Column 1 (Camera Y-axis / Up Vector)
-		u[0], u[1], u[2], 0,
-		// Column 2 (Camera Z-axis / Inverse Look Vector)
-		-f[0], -f[1], -f[2], 0,
-		// Column 3 (Translation)
+		// Column 0
+		s[0], u[0], -f[0], 0,
+		// Column 1
+		s[1], u[1], -f[1], 0,
+		// Column 2
+		s[2], u[2], -f[2], 0,
+		// Column 3
 		tx, ty, tz, 1,
 	}
 }

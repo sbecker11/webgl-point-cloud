@@ -26,14 +26,14 @@ type Camera struct {
 func NewCamera(distance float32) *Camera {
 	return &Camera{
 		distance:     distance,
-		rotationX:    0,
-		rotationY:    0,
+		rotationX:    0.3, // Start with a slight tilt
+		rotationY:    -0.5, // Start with a slight rotation
 		zoom:         1.0,
 		velocityX:    0,
 		velocityY:    0,
 		damping:      0.90,
 		isMouseDown:  false,
-		minRotationX: -math.Pi / 2 * 0.999,
+		minRotationX: -math.Pi / 2 * 0.999, // Clamp just before the poles
 		maxRotationX: math.Pi / 2 * 0.999,
 		minZoom:      0.1,
 		maxZoom:      10.0,
@@ -41,26 +41,28 @@ func NewCamera(distance float32) *Camera {
 }
 
 func (c *Camera) GetViewMatrix() glf32.Mat4 {
-	// Build the view matrix by inverting the camera's transformations.
-	// 1. Start with an identity matrix.
-	matrix := glf32.Identity()
+	// Calculate camera position using spherical coordinates.
+	// This is the standard, stable way for an orbit camera.
+	effectiveDistance := c.distance / c.zoom
+	camX := effectiveDistance * float32(math.Sin(float64(c.rotationY))*math.Cos(float64(c.rotationX)))
+	camY := effectiveDistance * float32(math.Sin(float64(c.rotationX)))
+	camZ := effectiveDistance * float32(math.Cos(float64(c.rotationY))*math.Cos(float64(c.rotationX)))
+	position := glf32.Vec3{camX, camY, camZ}
 
-	// 2. Translate out to the camera's distance along the Z-axis.
-	matrix = glf32.MultiplyMatrices(matrix, glf32.Translate(0, 0, -c.distance/c.zoom))
+	// The world's up vector. Clamping rotationX prevents the camera's forward
+	// vector from becoming parallel to 'up', which is what caused all crashes.
+	up := glf32.Vec3{0, 1, 0}
+	target := glf32.Vec3{0, 0, 0}
 
-	// 3. Rotate around the X-axis (pitch).
-	matrix = glf32.MultiplyMatrices(matrix, glf32.RotateX(c.rotationX))
-
-	// 4. Rotate around the Y-axis (yaw).
-	matrix = glf32.MultiplyMatrices(matrix, glf32.RotateY(c.rotationY))
-
-	return matrix
+	// With the corrected LookAt function, this is now stable and reliable.
+	return glf32.LookAt(position, target, up)
 }
 
 func (c *Camera) ApplyInertia() {
 	if !c.isMouseDown && (c.velocityX != 0 || c.velocityY != 0) {
 		c.rotationY += c.velocityX * 0.01
-		c.rotationX += c.velocityY * 0.01 // Corrected direction for inertia
+		c.rotationX += c.velocityY * 0.01
+		c.wrapAngles()
 		c.velocityX *= c.damping
 		c.velocityY *= c.damping
 		c.clampRotation()
@@ -73,6 +75,14 @@ func (c *Camera) clampRotation() {
 	}
 	if c.rotationX < c.minRotationX {
 		c.rotationX = c.minRotationX
+	}
+}
+
+func (c *Camera) wrapAngles() {
+	// Keep rotationY between 0 and 2*PI to prevent floating point instability.
+	c.rotationY = float32(math.Mod(float64(c.rotationY), 2*math.Pi))
+	if c.rotationY < 0 {
+		c.rotationY += 2 * math.Pi
 	}
 }
 
@@ -95,12 +105,15 @@ func (c *Camera) HandleMouseMove(x, y float64) {
 	dx := x - c.lastMouseX
 	dy := y - c.lastMouseY
 
-	c.rotationY += float32(dx) * 0.01
-	c.rotationX += float32(dy) * 0.01 // Corrected direction for mouse tilt
+	// Invert rotationY for intuitive horizontal rotation
+	// Add to rotationX for intuitive vertical rotation
+	c.rotationY -= float32(dx) * 0.01
+	c.rotationX += float32(dy) * 0.01
+	c.wrapAngles()
 	c.clampRotation()
 
-	// Update velocity for inertia
-	c.velocityX = float32(dx) * 0.5
+	// Update velocity for inertia, matching the rotation direction
+	c.velocityX = -float32(dx) * 0.5
 	c.velocityY = float32(dy) * 0.5
 
 	c.lastMouseX = x
